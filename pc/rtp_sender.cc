@@ -1265,6 +1265,16 @@ void AudioRtpSender::SetSend() {
   if (stopped_) {
     return;
   }
+
+  // Forward is_external_source from the track's source to the sink adapter
+  // so the voice engine knows not to mix ADM audio into this stream.
+  // Assigned unconditionally (a sourceless track uses the ADM path) so track
+  // replacement in either direction updates the flag.
+  if (audio_track()) {
+    AudioSourceInterface* track_source = audio_track()->GetSource();
+    sink_adapter_->set_is_external_source(track_source &&
+                                          track_source->is_external_source());
+  }
   AudioOptions options;
   const bool track_enabled = track_->enabled();
   std::optional<AudioOptions> track_source_options;
