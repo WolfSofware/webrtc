@@ -100,6 +100,40 @@ AudioEngineDevice::EngineState SetVoiceProcessingPathEnabled(AudioEngineDevice::
   return state;
 }
 
+#if TARGET_OS_OSX
+AudioEngineDevice::EngineState UseBypassedVpioForSplitDeviceRouting(
+    AudioEngineDevice::EngineState state) {
+  if (state.voice_processing_enabled || !state.IsInputEnabled() ||
+      !state.IsOutputEnabled() ||
+      (state.input_device_id == kAudioObjectUnknown &&
+       state.output_device_id == kAudioObjectUnknown)) {
+    return state;
+  }
+
+  const AudioObjectID input_device =
+      state.input_device_id != kAudioObjectUnknown
+          ? state.input_device_id
+          : mac_audio_utils::GetDefaultInputDeviceID().value_or(
+                kAudioObjectUnknown);
+  const AudioObjectID output_device =
+      state.output_device_id != kAudioObjectUnknown
+          ? state.output_device_id
+          : mac_audio_utils::GetDefaultOutputDeviceID().value_or(
+                kAudioObjectUnknown);
+  if (input_device == kAudioObjectUnknown ||
+      output_device == kAudioObjectUnknown || input_device == output_device) {
+    return state;
+  }
+
+  // Plain AVAudioEngine exposes one HAL device for both directions. Use the
+  // split VPIO topology for independent devices, but keep its DSP bypassed so
+  // software APM remains the only audio processing path.
+  state = SetVoiceProcessingPathEnabled(state, true);
+  state.voice_processing_bypassed = true;
+  return state;
+}
+#endif
+
 AudioProcessingOptionsValidationContext AudioProcessingValidationContextForEngineState(
     const AudioEngineDevice::EngineState &state) {
   AudioProcessingOptionsValidationContext context;
@@ -1634,6 +1668,11 @@ int32_t AudioEngineDevice::ModifyEngineState(
 
   EngineState old_state = engine_state_;
   EngineState new_state = state_transform(old_state);
+#if TARGET_OS_OSX
+  if (new_state.render_mode == RenderMode::Device) {
+    new_state = UseBypassedVpioForSplitDeviceRouting(new_state);
+  }
+#endif
   EngineStateUpdate state = {old_state, new_state};
 
   // No changes, return immediately.
