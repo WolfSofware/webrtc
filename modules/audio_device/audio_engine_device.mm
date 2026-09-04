@@ -2399,7 +2399,9 @@ int32_t AudioEngineDevice::ApplyDeviceEngineState(EngineStateUpdate state) {
   // wired, and the node formats read during enable must reflect the device.
 #if TARGET_OS_OSX
   if (!state.next.voice_processing_enabled && state.next.IsAnyEnabled() &&
-      (!state.prev.IsAnyEnabled() || state.IsEngineRecreateRequired())) {
+      (!state.prev.IsAnyEnabled() || state.IsEngineRecreateRequired() ||
+       (!state.prev.IsInputEnabled() && state.next.IsInputEnabled()) ||
+       (!state.prev.IsOutputEnabled() && state.next.IsOutputEnabled()))) {
     bool input_needed = state.next.IsInputEnabled();
     bool output_needed = state.next.IsOutputEnabled();
     AudioObjectID requested_input = state.next.input_device_id;
