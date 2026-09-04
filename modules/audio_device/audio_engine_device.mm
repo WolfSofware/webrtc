@@ -2441,6 +2441,26 @@ int32_t AudioEngineDevice::ApplyDeviceEngineState(EngineStateUpdate state) {
           RTC_DCHECK_RUN_ON(thread_);
           DestroyAggregateDeviceIfNeeded();
         });
+
+        // AudioHardwareCreateAggregateDevice returns before CoreAudio has
+        // published the aggregate streams on macOS 15. Setting the HAL unit
+        // during that window succeeds, but its AVAudioEngine node formats stay
+        // empty and recording fails later. Wait for both directions first.
+        constexpr int kMaxAggregateReadyAttempts = 500;
+        bool aggregate_ready = false;
+        for (int attempt = 0; attempt < kMaxAggregateReadyAttempts; ++attempt) {
+          if (mac_audio_utils::GetNumStreams(target_device, true) > 0 &&
+              mac_audio_utils::GetNumStreams(target_device, false) > 0) {
+            aggregate_ready = true;
+            break;
+          }
+          webrtc::Thread::SleepMs(10);
+        }
+        if (!aggregate_ready) {
+          LOGE() << "Aggregate streams did not become ready for device "
+                 << target_device;
+          return rollback(kAudioEngineRecordingDeviceNotAvailableError);
+        }
       } else if (input_needed && input_device != kAudioObjectUnknown &&
                  (!output_needed || input_device == output_device)) {
         target_device = input_device;
@@ -2469,7 +2489,7 @@ int32_t AudioEngineDevice::ApplyDeviceEngineState(EngineStateUpdate state) {
         // aggregates in particular can take a moment. Wait until the node
         // formats are usable so the enable steps below read valid channel
         // counts.
-        constexpr int kMaxFormatAttempts = 100;
+        constexpr int kMaxFormatAttempts = 500;
         constexpr int64_t kFormatPollIntervalMs = 10;
         bool format_ready = false;
         for (int attempt = 0; attempt < kMaxFormatAttempts; ++attempt) {
