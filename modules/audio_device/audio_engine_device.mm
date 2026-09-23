@@ -2538,7 +2538,7 @@ int32_t AudioEngineDevice::ApplyDeviceEngineState(EngineStateUpdate state) {
         LOGI() << "Setting shared I/O unit device: "
                << device_name.value_or("Unknown") << " (" << target_device << ")";
         AudioUnit io_unit =
-            output_needed ? outputNode().audioUnit : inputNode().audioUnit;
+            output_needed ? OutputNode(state).audioUnit : InputNode(state).audioUnit;
         OSStatus err = AudioUnitSetProperty(
             io_unit, kAudioOutputUnitProperty_CurrentDevice, kAudioUnitScope_Global,
             0, &target_device, sizeof(target_device));
@@ -2558,9 +2558,9 @@ int32_t AudioEngineDevice::ApplyDeviceEngineState(EngineStateUpdate state) {
         bool format_ready = false;
         for (int attempt = 0; attempt < kMaxFormatAttempts; ++attempt) {
           bool output_ready =
-              !output_needed || [outputNode() outputFormatForBus:0].channelCount > 0;
+              !output_needed || [OutputNode(state) outputFormatForBus:0].channelCount > 0;
           bool input_ready =
-              !input_needed || [inputNode() outputFormatForBus:0].channelCount > 0;
+              !input_needed || [InputNode(state) outputFormatForBus:0].channelCount > 0;
           if (output_ready && input_ready) {
             format_ready = true;
             break;
