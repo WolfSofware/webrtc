@@ -109,6 +109,20 @@ RTC_OBJC_EXPORT
                                                                         channels:(NSUInteger)channels
                                                                      queueSizeMs:(int)queueSizeMs;
 
+/**
+ * Same as above. With audioProcessing YES, every delivered frame runs through
+ * the capture side of the factory's audio processing module (echo
+ * cancellation, noise suppression, gain control as configured for the
+ * track), for microphone audio the application captures itself. The echo
+ * reference is the ADM's playout. Use it for one source at a time, and only
+ * while the ADM is not recording. Needs a 8/16/32/48 kHz sample rate; if
+ * processing cannot be enabled, the source is still returned without it.
+ */
+- (nullable RTC_OBJC_TYPE(RTCCustomAudioSource) *)customAudioSourceWithSampleRate:(int)sampleRate
+                                                                        channels:(NSUInteger)channels
+                                                                     queueSizeMs:(int)queueSizeMs
+                                                                 audioProcessing:(BOOL)audioProcessing;
+
 /** Initialize an RTCAudioTrack with an id. Convenience ctor to use an audio source
  * with no constraints.
  */

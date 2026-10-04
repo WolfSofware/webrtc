@@ -64,6 +64,8 @@ CustomAudioSource::CustomAudioSource(int sample_rate_hz,
       num_channels_(num_channels),
       queue_size_ms_(queue_size_ms),
       samples_per_10ms_(sample_rate_hz / 100 * num_channels) {
+  // Synchronous mode needs the scratch too, to process the caller's frame.
+  frame_buffer_.assign(samples_per_10ms_, 0);
   if (queue_size_ms == 0) {
     // Synchronous mode: PushFrame() delivers directly, no pacer.
     return;
@@ -75,7 +77,6 @@ CustomAudioSource::CustomAudioSource(int sample_rate_hz,
   // logical capacity by up to one queue of already-read samples.
   buffer_.reserve(queue_size_samples_ + notify_threshold_samples_ +
                   queue_size_samples_);
-  frame_buffer_.assign(samples_per_10ms_, 0);
 
   audio_queue_ = task_queue_factory->CreateTaskQueue(
       "CustomAudioSource", TaskQueueFactory::Priority::NORMAL);
@@ -88,6 +89,7 @@ CustomAudioSource::CustomAudioSource(int sample_rate_hz,
           // Held across snapshot and fan-out so RemoveSink can fence on it.
           MutexLock delivery_lock(&delivery_mutex_);
           std::vector<AudioTrackSinkInterface*> sinks;
+          scoped_refptr<AudioProcessing> apm;
           {
             MutexLock lock(&mutex_);
             // Copy up to one frame into the pacer-owned scratch, padding
@@ -108,6 +110,12 @@ CustomAudioSource::CustomAudioSource(int sample_rate_hz,
             }
             completion = TakeCompletionIfDue();
             sinks = sinks_;
+            apm = apm_;
+          }
+          // Underrun silence is processed too: AEC keeps its render/capture
+          // alignment only on a continuous capture stream.
+          if (apm) {
+            ProcessFrame(apm.get(), frame_buffer_.data());
           }
           // Deliver outside mutex_ so pushers don't wait on the per-sink
           // work. Only the pacer thread reads frame_buffer_.
@@ -191,7 +199,14 @@ bool CustomAudioSource::PushFrame(const int16_t* data,
             << "got " << samples_per_channel << " samples per channel";
         return false;
       }
-      DeliverToSinks(sinks_, data, samples_per_channel);
+      if (apm_) {
+        // The caller's frame is const: process a copy.
+        std::copy_n(data, num_samples, frame_buffer_.begin());
+        ProcessFrame(apm_.get(), frame_buffer_.data());
+        DeliverToSinks(sinks_, frame_buffer_.data(), samples_per_channel);
+      } else {
+        DeliverToSinks(sinks_, data, samples_per_channel);
+      }
       fire_inline = static_cast<bool>(on_complete);
     } else {
       const size_t capacity = queue_size_samples_ + notify_threshold_samples_;
@@ -219,6 +234,20 @@ bool CustomAudioSource::PushFrame(const int16_t* data,
   if (fire_inline) {
     std::move(on_complete)();
   }
+  return true;
+}
+
+bool CustomAudioSource::SetAudioProcessing(scoped_refptr<AudioProcessing> apm) {
+  const auto& rates = AudioProcessing::kNativeSampleRatesHz;
+  if (apm &&
+      std::find(rates.begin(), rates.end(), sample_rate_hz_) == rates.end()) {
+    RTC_LOG(LS_ERROR) << "CustomAudioSource: audio processing needs a native "
+                      << "APM rate (8/16/32/48 kHz), source is "
+                      << sample_rate_hz_ << "Hz";
+    return false;
+  }
+  MutexLock lock(&mutex_);
+  apm_ = std::move(apm);
   return true;
 }
 
@@ -251,6 +280,21 @@ void CustomAudioSource::DeliverToSinks(
   for (AudioTrackSinkInterface* sink : sinks) {
     sink->OnData(data, kBitsPerSample, sample_rate_hz_, num_channels_,
                  samples_per_channel);
+  }
+}
+
+void CustomAudioSource::ProcessFrame(AudioProcessing* apm, int16_t* frame) {
+  const StreamConfig config(sample_rate_hz_, num_channels_);
+  // Pushed audio carries no device delay. AEC3 estimates the echo path delay
+  // on its own; setting it keeps APM from treating the parameter as unset.
+  apm->set_stream_delay_ms(0);
+  const int error = apm->ProcessStream(frame, config, config, frame);
+  if (error != last_apm_error_) {
+    if (error != AudioProcessing::kNoError) {
+      RTC_LOG(LS_WARNING) << "CustomAudioSource: ProcessStream failed with "
+                          << error;
+    }
+    last_apm_error_ = error;
   }
 }
 

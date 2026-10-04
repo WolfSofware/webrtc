@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "absl/functional/any_invocable.h"
+#include "api/audio/audio_processing.h"
 #include "api/audio_options.h"
 #include "api/media_stream_interface.h"
 #include "api/scoped_refptr.h"
@@ -36,10 +37,10 @@ namespace webrtc {
 // reporting SourceType::kCustom keeps AudioState from also pushing device
 // audio into streams fed by this source.
 //
-// NOTE: capture-side APM (AEC/NS/AGC/HPF) is intentionally bypassed, since
-// that processing runs in AudioTransportImpl on the ADM path only. Callers
-// must supply audio that needs no such processing (e.g. app or file audio).
-// Frames are still resampled to the encoder rate downstream in ChannelSend.
+// NOTE: capture-side APM (AEC/NS/AGC/HPF) is bypassed by default, since that
+// processing runs in AudioTransportImpl on the ADM path only. A source fed
+// with microphone audio can opt in with SetAudioProcessing(). Frames are
+// still resampled to the encoder rate downstream in ChannelSend.
 class CustomAudioSource : public LocalAudioSource {
  public:
   // queue_size_ms == 0: synchronous mode. PushFrame() delivers to sinks on
@@ -87,6 +88,16 @@ class CustomAudioSource : public LocalAudioSource {
                  size_t samples_per_channel,
                  absl::AnyInvocable<void() &&> on_complete = nullptr);
 
+  // Runs every delivered 10 ms frame through the capture side of `apm` (AEC,
+  // NS, AGC, HPF as configured by the voice engine). Meant for microphone
+  // audio captured by the application: the render side of the same APM is
+  // fed by the ADM's playout, so the echo of what the device plays is
+  // removed. APM processes a single capture stream, so at most one source
+  // per APM may enable this, and only while the ADM itself is not recording.
+  // nullptr disables processing. Returns false and leaves processing off if
+  // the source's sample rate is not a native APM rate (8/16/32/48 kHz).
+  bool SetAudioProcessing(scoped_refptr<AudioProcessing> apm);
+
   // Drops all queued audio (buffered mode). A pending completion fires.
   void ClearBuffer();
 
@@ -112,6 +123,9 @@ class CustomAudioSource : public LocalAudioSource {
   void DeliverToSinks(const std::vector<AudioTrackSinkInterface*>& sinks,
                       const int16_t* data,
                       size_t samples_per_channel) const;
+  // Processes one 10 ms frame in place. Callers serialize: the pacer thread
+  // in buffered mode, mutex_ in synchronous mode.
+  void ProcessFrame(AudioProcessing* apm, int16_t* frame);
   // Returns the pending completion if the buffer drained below the
   // threshold, to be invoked after releasing mutex_.
   absl::AnyInvocable<void() &&> TakeCompletionIfDue()
@@ -139,8 +153,15 @@ class CustomAudioSource : public LocalAudioSource {
   std::vector<int16_t> buffer_ RTC_GUARDED_BY(mutex_);
   size_t read_offset_ RTC_GUARDED_BY(mutex_) = 0;
   absl::AnyInvocable<void() &&> on_complete_ RTC_GUARDED_BY(mutex_);
+  // Capture-side processing, see SetAudioProcessing(). The pacer snapshots
+  // it under mutex_ together with the sinks.
+  scoped_refptr<AudioProcessing> apm_ RTC_GUARDED_BY(mutex_);
+  // Last ProcessStream() result, so a persistent error is logged once
+  // rather than every 10 ms. Touched only by the serialized processing path.
+  int last_apm_error_ = 0;
   // One-frame scratch the pacer fills under mutex_ and delivers outside
-  // the lock. Only the pacer thread touches it.
+  // the lock. Only the pacer thread touches it. Synchronous mode copies
+  // the caller's frame into it (under mutex_) when processing is on.
   std::vector<int16_t> frame_buffer_;
 
   RepeatingTaskHandle audio_task_;

@@ -1295,7 +1295,10 @@ rtc_library("custom_audio_source") {
     "custom_audio_source.cc",
     "custom_audio_source.h",
   ]
-  public_deps = [ ":local_audio_source" ]
+  public_deps = [
+    ":local_audio_source",
+    "../api/audio:audio_processing",
+  ]
   deps = [
     "../api:array_view",
     "../api:audio_options_api",

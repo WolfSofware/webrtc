@@ -446,6 +446,16 @@ static webrtc::Environment CreateDefaultEnvironment() {
 - (nullable RTC_OBJC_TYPE(RTCCustomAudioSource) *)customAudioSourceWithSampleRate:(int)sampleRate
                                                                         channels:(NSUInteger)channels
                                                                      queueSizeMs:(int)queueSizeMs {
+  return [self customAudioSourceWithSampleRate:sampleRate
+                                      channels:channels
+                                   queueSizeMs:queueSizeMs
+                               audioProcessing:NO];
+}
+
+- (nullable RTC_OBJC_TYPE(RTCCustomAudioSource) *)customAudioSourceWithSampleRate:(int)sampleRate
+                                                                        channels:(NSUInteger)channels
+                                                                     queueSizeMs:(int)queueSizeMs
+                                                                 audioProcessing:(BOOL)audioProcessing {
   if (!_env.has_value()) {
     RTCLogError(@"customAudioSource: factory has no media environment");
     return nil;
@@ -455,6 +465,17 @@ static webrtc::Environment CreateDefaultEnvironment() {
   if (!source) {
     RTCLogError(@"customAudioSource: invalid arguments");
     return nil;
+  }
+  if (audioProcessing) {
+    // The same module the voice engine uses: its render side already gets
+    // the ADM's playout, which is the echo reference.
+    webrtc::scoped_refptr<webrtc::AudioProcessing> apm =
+        _defaultAudioProcessingModule.nativeAudioProcessingModule;
+    if (!apm) {
+      RTCLogError(@"customAudioSource: factory has no audio processing module");
+    } else if (!source->SetAudioProcessing(apm)) {
+      RTCLogError(@"customAudioSource: audio processing not enabled");
+    }
   }
   return [[RTC_OBJC_TYPE(RTCCustomAudioSource) alloc] initWithFactory:self
                                                nativeCustomAudioSource:source];
