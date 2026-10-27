@@ -19,6 +19,7 @@ NS_ASSUME_NONNULL_BEGIN
 @class RTC_OBJC_TYPE(RTCRtpCapabilities);
 @class RTC_OBJC_TYPE(RTCAudioSource);
 @class RTC_OBJC_TYPE(RTCAudioTrack);
+@class RTC_OBJC_TYPE(RTCCustomAudioSource);
 @class RTC_OBJC_TYPE(RTCConfiguration);
 @class RTC_OBJC_TYPE(RTCMediaConstraints);
 @class RTC_OBJC_TYPE(RTCMediaStream);
@@ -94,6 +95,33 @@ RTC_OBJC_EXPORT
 /** Initialize an RTCAudioSource with constraints. */
 - (RTC_OBJC_TYPE(RTCAudioSource) *)audioSourceWithConstraints:
     (nullable RTC_OBJC_TYPE(RTCMediaConstraints) *)constraints;
+
+/**
+ * Initialize an RTCCustomAudioSource the application pushes PCM frames
+ * into, independent of the device capture path. Pushed frames must be
+ * interleaved int16 at the given sample rate and channel count.
+ * queueSizeMs must be a non-negative multiple of 10: 0 selects synchronous
+ * mode (exact 10 ms frames delivered on the calling thread), larger values
+ * buffer pushed audio and pace 10 ms deliveries internally.
+ * Returns nil for invalid arguments.
+ */
+- (nullable RTC_OBJC_TYPE(RTCCustomAudioSource) *)customAudioSourceWithSampleRate:(int)sampleRate
+                                                                        channels:(NSUInteger)channels
+                                                                     queueSizeMs:(int)queueSizeMs;
+
+/**
+ * Same as above. With audioProcessing YES, every delivered frame runs through
+ * the capture side of the factory's audio processing module (echo
+ * cancellation, noise suppression, gain control as configured for the
+ * track), for microphone audio the application captures itself. The echo
+ * reference is the ADM's playout. Use it for one source at a time, and only
+ * while the ADM is not recording. Needs a 8/16/32/48 kHz sample rate; if
+ * processing cannot be enabled, the source is still returned without it.
+ */
+- (nullable RTC_OBJC_TYPE(RTCCustomAudioSource) *)customAudioSourceWithSampleRate:(int)sampleRate
+                                                                        channels:(NSUInteger)channels
+                                                                     queueSizeMs:(int)queueSizeMs
+                                                                 audioProcessing:(BOOL)audioProcessing;
 
 /** Initialize an RTCAudioTrack with an id. Convenience ctor to use an audio source
  * with no constraints.
